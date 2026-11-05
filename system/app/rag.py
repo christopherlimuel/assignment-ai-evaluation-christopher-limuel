@@ -15,9 +15,12 @@ from google import genai  # sesuaikan dengan library Gemini API yang digunakan
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import json
+from langsmith import traceable
+from langsmith.wrappers import wrap_gemini
 
 load_dotenv()
-_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_client_raw = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_client = wrap_gemini(_client_raw)
 
 KNOWLEDGE_BASE_PATH = "data/it_helpdesk_knowledge_base.csv"
 
@@ -29,6 +32,7 @@ class RAGResponse(BaseModel):
     is_relevant:bool = Field(description="true jika jawaban ditemukan di context yang disediakan, atau false jika tidak ditemukan")
     answer:str = Field(description="Jawaban berdasarkan context yang disediakan, atau bilang anda tidak memiliki informasi tersebut dan sarankan menghubungi IT Support")
 
+@traceable(name="Gemini get_embedding", project=os.environ.get("LANGSMITH_PROJECT"))
 def _get_embedding(text: str):
     result = _client.models.embed_content(
         model="gemini-embedding-2",  # sesuaikan versi model embedding
@@ -95,7 +99,7 @@ def semantic_search(query: str, top_k: int = 3):
 
     return results
 
-
+@traceable(name="Gemini answer_from_knowledge_base", project=os.environ.get("LANGSMITH_PROJECT"))
 async def answer_from_knowledge_base(query: str) -> dict:
     """
     Fungsi yang dipanggil router.py ketika intent = 'faq'.
@@ -105,7 +109,7 @@ async def answer_from_knowledge_base(query: str) -> dict:
     search_result = semantic_search(query, top_k=3)
     prompt = _build_prompt(query, search_result)
     response_json = _client.models.generate_content(
-        model='gemini-3.1-flash-lite',  # sesuaikan versi model
+        model='gemini-3.5-flash-lite',  # sesuaikan versi model
         contents=prompt,
         config=genai.types.GenerateContentConfig(
             temperature=0.3, 

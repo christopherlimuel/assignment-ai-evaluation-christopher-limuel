@@ -14,12 +14,16 @@ from google import genai
 
 from app.rag import answer_from_knowledge_base
 from app.tools import get_ticket_status
+from langsmith import traceable
+from langsmith.wrappers import wrap_gemini
+import time
 
 # 🔧 TODO: import LLM client di sini (Gemini AI API) untuk melakukan intent detection
 load_dotenv()
-_intent_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_intent_client_raw = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_intent_client = wrap_gemini(_intent_client_raw)
 
-
+@traceable(name="Gemini detect_intent", project=os.environ.get("LANGSMITH_PROJECT"))
 async def detect_intent(query: str) -> str:
     """
     Menentukan intent dari query user. Harus mengembalikan salah satu:
@@ -39,14 +43,16 @@ async def detect_intent(query: str) -> str:
         {query}
         """
     response = _intent_client.models.generate_content(
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash-lite",
         contents=prompt,
         config=genai.types.GenerateContentConfig(temperature=0))
     
     intent = response.text.strip().lower()
     return intent
 
+@traceable(name="handle_query", project=os.environ.get("LANGSMITH_PROJECT"))
 async def handle_query(query: str) -> dict:
+    start_time = time.perf_counter()
     """
     Fungsi utama yang dipanggil oleh endpoint /ask.
     Menjalankan intent detection, lalu merutekan ke RAG atau tool call yang sesuai.
@@ -59,12 +65,18 @@ async def handle_query(query: str) -> dict:
         ticket_id = extract_ticket_id(query)
         if ticket_id:
             data = get_ticket_status(ticket_id)
+            end_time = time.perf_counter() - start_time
+            print("handle_query latency: ", end_time)
             return {"status": data["status"], "intent": "ticket_status", "data": data["data"]}
         else:
+            end_time = time.perf_counter() - start_time
+            print("handle_query latency: ", end_time)
             return {"status": "error", "intent": "ticket_status", "data": "Format ID tiket tidak dikenali"}
 
     elif intent == "faq":
         data = await answer_from_knowledge_base(query)
+        end_time = time.perf_counter() - start_time
+        print("handle_query latency: ", end_time)
         return {"status": data["status"], "intent": "faq", "data": data["data"]}
 
     else:
@@ -89,5 +101,3 @@ def extract_ticket_id(query: str) -> str:
     if not ticket_ids:
         return ""
     return f"TICKET-{ticket_ids[-1]}"
-
-print(handle_query("Gimana cara reset password VPN"))
