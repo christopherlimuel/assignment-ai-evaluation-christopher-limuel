@@ -11,6 +11,7 @@ import os
 import pandas as pd
 import numpy as np
 import faiss
+import pickle
 from google import genai  # sesuaikan dengan library Gemini API yang digunakan
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -75,13 +76,22 @@ def build_index(csv_path):
     faiss_dimensions = embeddings.shape[1]          # embeddings.shape = (number of embedding, vector size of each embedding)
     _index = faiss.IndexFlatL2(faiss_dimensions)
     _index.add(embeddings)
+    faiss.write_index(_index, INDEX_PATH)
+    with open(DOCUMENTS_PATH, "wb") as f:
+        pickle.dump(_documents, f)
 
+def load_index():
+    global _index, _documents, _df
+    _index = faiss.read_index(INDEX_PATH)
+    with open(DOCUMENTS_PATH, "rb") as f:
+        _documents = pickle.load(f)
+    _df = pd.read_csv(KNOWLEDGE_BASE_PATH)
 
 def semantic_search(query: str, top_k: int = 3):
     global _index, _df
 
     if _index is None:
-        build_index(KNOWLEDGE_BASE_PATH)
+        load_index()
     
     query_embedding =[_get_embedding(query)]
     query_embedding = np.array(query_embedding, dtype=np.float32)

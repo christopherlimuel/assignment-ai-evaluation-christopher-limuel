@@ -8,12 +8,28 @@ Alur endpoint utama:
   4. Mengembalikan response terstruktur ke client
 """
 
+import os
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app.router import handle_query
+from app.rag import build_index, load_index
 
-app = FastAPI(title="IT Helpdesk Assistant API")
+def lifespan_event(app: FastAPI):
+    """
+    Event lifespan FastAPI untuk membangun index FAISS saat startup.
+    """
+    KNOWLEDGE_BASE_PATH = "data/it_helpdesk_knowledge_base.csv"
+    INDEX_PATH = "data/index_it_helpdesk_knowledge_base.index"
+    DOCUMENTS_PATH = "data/documents_it_helpdesk_knowledge_base.pkl"
+    if not (os.path.exists(INDEX_PATH) and os.path.exists(DOCUMENTS_PATH)):
+        build_index(KNOWLEDGE_BASE_PATH)
+    else:
+        load_index()
+    yield
+
+app = FastAPI(title="IT Helpdesk Assistant API", lifespan=lifespan_event)
 
 
 class AskRequest(BaseModel):
