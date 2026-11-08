@@ -18,7 +18,7 @@ from app.rag import build_index, load_index
 
 def lifespan_event(app: FastAPI):
     """
-    Event lifespan FastAPI untuk membangun index FAISS saat startup.
+    Event lifespan FastAPI untuk membangun index FAISS saat startup. Load index jika sudah ada di local storage.
     """
     KNOWLEDGE_BASE_PATH = "data/it_helpdesk_knowledge_base.csv"
     INDEX_PATH = "data/index_it_helpdesk_knowledge_base.index"
@@ -37,8 +37,7 @@ class AskRequest(BaseModel):
 
 
 class AskResponse(BaseModel):
-    status: str
-    intent: str
+    intent: dict
     data: str
 
 

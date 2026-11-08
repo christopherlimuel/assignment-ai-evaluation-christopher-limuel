@@ -13,25 +13,18 @@ import numpy as np
 import faiss
 import pickle
 from google import genai  # sesuaikan dengan library Gemini API yang digunakan
-from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-import json
 from langsmith import traceable
 from langsmith.wrappers import wrap_gemini
 
+# Client Gemini untuk get_embedding dan answer_from_knowledge_base
 load_dotenv()
 _client_raw = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 _client = wrap_gemini(_client_raw)
 
 KNOWLEDGE_BASE_PATH = "data/it_helpdesk_knowledge_base.csv"
-
-_index = None
-_documents = None
-_df = None
-
-class RAGResponse(BaseModel):
-    is_relevant:bool = Field(description="true jika jawaban ditemukan di context yang disediakan, atau false jika tidak ditemukan")
-    answer:str = Field(description="Jawaban berdasarkan context yang disediakan, atau bilang anda tidak memiliki informasi tersebut dan sarankan menghubungi IT Support")
+INDEX_PATH = "data/index_it_helpdesk_knowledge_base.index"
+DOCUMENTS_PATH = "data/documents_it_helpdesk_knowledge_base.pkl"
 
 @traceable(name="Gemini get_embedding", project=os.environ.get("LANGSMITH_PROJECT"))
 def _get_embedding(text: str):
@@ -41,29 +34,8 @@ def _get_embedding(text: str):
     )
     return result.embeddings[0].values
 
-def _build_prompt(query, context):
-    prompt = f"""
-        [Persona]
-        Anda adalah asisten IT Helpdesk yang ramah, profesional, dan membantu.
-        
-        [Task]
-        1. Analisis apakah informasi yang relevan untuk menjawab pertanyaan pengguna tersedia di dalam [Context] di bawah.
-        2. Tentukan nilai 'is_relevant':
-            - Bernilai 'true' jika informasi yang dicari ditemukan dan relevan di dalam context.
-            - Bernilai 'false' jika informasi tidak ditemukan atau tidak relevan.
-        3. Buat isi 'answer':
-            - Jika relevan ('true'), berikan jawaban langsung ke intinya dan terstruktur berdasarkan context.
-            - Jika tidak relevan ('false'), katakan dengan jujur bahwa anda belum memiliki informasi tersebut dan sarankan untuk menghubungi IT support.
-        
-        [Context]
-        {context}
-        
-        [Question]
-        {query}
-        """
-    return prompt
-
-
+# Membangun index FAISS dan menyimpan ke local storage
+@traceable(name="Gemini build_index", project=os.environ.get("LANGSMITH_PROJECT"))
 def build_index(csv_path):
     global _index, _documents, _df
     _df = pd.read_csv(csv_path)
@@ -80,6 +52,7 @@ def build_index(csv_path):
     with open(DOCUMENTS_PATH, "wb") as f:
         pickle.dump(_documents, f)
 
+# Load index FAISS dan documents dari local storage
 def load_index():
     global _index, _documents, _df
     _index = faiss.read_index(INDEX_PATH)
@@ -87,7 +60,30 @@ def load_index():
         _documents = pickle.load(f)
     _df = pd.read_csv(KNOWLEDGE_BASE_PATH)
 
-def semantic_search(query: str, top_k: int = 3):
+# Prompt builder untuk answer_from_knowledge_base
+def _build_prompt(query:str, context:str) -> str:
+    prompt = f"""
+        [Persona]
+        Anda adalah asisten IT Helpdesk yang ramah, profesional, dan membantu.
+        
+        [Task]
+        1. Jawab [Question] HANYA berdasarkan [Context] yang tersedia dengan jelas, ringkas, one-line response.
+        2. Jika [Context] berisi **Data Tiket**: Sebutkan kode ID tiket dan subjek, sampaikan status dan pembaruan terakhir tiket tersebut dengan jelas kepada user.
+        3. Jika [Context] berisi **Data FAQ**: Jelaskan jawabannya secara ringkas dan terstruktur.
+        4. Jika [Context] berisi pesan **[System Notice]**: Ikuti instruksi dan sampaikan pesan tersebut dengan bahasa yang ramah dan humanis.
+        5. Jika ada sebagian [Question] yang tidak dapat dijawab dari [Context], sampaikan dengan jujur bahwa anda tidak memiliki informasi tersebut, dan sarankan user untuk menghubungi IT support.
+        6. Jawab terlebih dahulu [Question] sesuai [Context] yang tersedia, sebelum menyampaikan [System Notice] atau bagian [Question] yang tidak dapat dijawab.
+        
+        [Context]
+        {context}
+        
+        [Question]
+        {query}
+        """
+    return prompt
+
+# Embed query dan semantic search di index FAISS, mengembalikan top_k hasil teratas
+def semantic_search(query: str, top_k: int = 3) -> list[dict]:
     global _index, _df
 
     if _index is None:
@@ -110,25 +106,20 @@ def semantic_search(query: str, top_k: int = 3):
     return results
 
 @traceable(name="Gemini answer_from_knowledge_base", project=os.environ.get("LANGSMITH_PROJECT"))
-async def answer_from_knowledge_base(query: str) -> dict:
+async def answer_from_knowledge_base(query: str, context:str) -> str:
     """
     Fungsi yang dipanggil router.py ketika intent = 'faq'.
     Menjalankan semantic search, menyusun prompt dengan context hasil retrieval,
     lalu memanggil LLM untuk menghasilkan jawaban.
     """
-    search_result = semantic_search(query, top_k=3)
-    prompt = _build_prompt(query, search_result)
-    response_json = _client.models.generate_content(
-        model='gemini-3.5-flash-lite',  # sesuaikan versi model
+    prompt = _build_prompt(query, context)
+    response_str = _client.models.generate_content(
+        model='gemini-3.1-flash-lite',  # sesuaikan versi model
         contents=prompt,
         config=genai.types.GenerateContentConfig(
-            temperature=0.3, 
-            response_mime_type="application/json",
-            response_schema=RAGResponse)
-    )
-    response = json.loads(response_json.text)
-    if response["is_relevant"] == True:
-        response_status = "success"
-    else:
-        response_status = "error"
-    return {"status":response_status, "data":response["answer"]}
+            temperature=0.3)
+    ).text
+    return response_str
+
+# TODO: Tambahkan dynamic top_k selection
+# TODO: Tambahkan reranking pada hasil semantic search sebelum diteruskan ke LLM 
