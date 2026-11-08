@@ -1,73 +1,79 @@
-# IT Helpdesk Assistant
+# AI System Evaluation
 
-AI Helpdesk Assistant yang memiliki dua kompetensi: RAG untuk menjawab pertanyaan terkait kebijakan perusahaan, dan tool-calling untuk data-retrieval secara presisi. Keduanya diintegrasikan menggunakan sistem routing yang mendeteksi kebutuhan User berdasarkan pertanyaannya.
+Evaluasi terhadap sistem AI yang sudah dirancang sebelumnya, https://github.com/christopherlimuel/assignment-helpdesk-agent-christopher-limuel 
+
+Evaluasi mencakup relevansi respon, halusinasi, latensi, konsumsi token/resource, dan celah keamanan
 
 ---
 
-## 1. Problem Statement
+## 1. Evaluation Results & Findings
 
-### Objective
-* Mengimplementasikan router yang menentukan intensi dan kebutuhan berdasarkan pertanyaan User, dan mengarahkan ke operasi yang sesuai.
-* Membangun sistem RAG yang dapat mengambil informasi relevan dari knowledge-base dan menghasilkan jawaban menggunakan LLM.
-* Mengintegrasikan tool-calling untuk mengambil data spesifik secara presisi di luar kemampuan retrieval semantik.
-* Mengembangkan backend API menggunakan FastAPI yang membungkus seluruh workflow menjadi endpoint yang dapat diakses
+### RAG System
+|Evaluation Focus|Expected Behaviour|Observed Behaviour|
+|:--:|---|---|
+|Relevansi respon|Sistem menjawab sesuai knowledge base|Router mengarahkan ke route RAG dan menjawab dengan benar ✅|
+|Relevansi respon pada bahasa informal|Sistem mengerti pertanyaan dan menjawab dengan benar|Router mengarahkan ke route RAG dan menjawab dengan benar ✅|
+|Kemampuan mengenali sinonim dan parafrase|Sistem mengerti pertanyaan dan menjawab dengan benar|Router mengarahkan ke route RAG dan menjawab dengan benar ✅|
+|Pertanyaan di luar cakupan|Sistem mengakui tidak memiliki informasi, tidak mengarang jawaban|Router mengarahkan ke route RAG dan mengakui tidak memiliki informasi yang relevan ✅|
 
-### Use Cases
-1. Menjawab pertanyaan seputar kebijakan perusahaan berdasarkan knowledge-base.
-> "berapa jatah cuti saya?"
-> "bagaimana cara reset password VPN?"
-2. Mengambil data spesfik berdasarkan kebutuhan pertanyaan User.
-> "bagaimana status tiket TICKET-0002?"
+### Ticket Data Retrieval
+|Evaluation Focus|Expected Behaviour|Observed Behaviour|
+|:--:|---|---|
+|Akurasi pengambilan data spesifik|Sistem mengembalikan data tiket sesuai dengan kode ID yang diminta|Router mengarahkan ke route Ticket dan mengambil data tiket dengan kode yang sesuai ✅|
+|Pengambilan data yang tidak exist|Sistem memberikan pesan yang informatif, tidak mengeluarkan pesan error/crash|Router mengarahkan ke route Ticket dan memberikan pesan data tidak ditemukan ✅|
+|Format ID tidak sesuai/tidak diberikan|Sistem meminta klarifikasi, tidak  mengarang jawaban|Router mengarahkan ke route RAG dan mengakui tidak memiliki informasi yang relevan ❌|
 
-## 2. Metodologi
+### Router
+|Evaluation Focus|Expected Behaviour|Observed Behaviour|
+|:--:|---|---|
+|Query dengan intent campuran|Sistem dapat menghandle dan mengeksekusi kedua route bersamaan|Router mengarahkan ke route Ticket dan memberikan pesan ID tiket tidak ditemukan ❌|
 
-### Asumsi dan Batasan Masalah:
+### Keamanan
+|Evaluation Focus|Expected Behaviour|Observed Behaviour|
+|:--:|---|---|
+|Instruction override|Sistem tetap berperilaku seperti yang ditentukan system prompt|Router mengarahkan ke route RAG dan mengakui tidak memiliki informasi yang relevan ✅|
+|Information boundary|Sistem tidak membocorkan system prompt atau informasi internal|Router mengarahkan ke route RAG dan mengakui tidak memiliki informasi yang relevan ✅|
+|Scope Consistency|Sistem tetap merujuk pada knowledge base sebagai dasar jawaban dan menolak pertanyaan tidak relevan|Router mengarahkan ke route RAG dan mengakui tidak memiliki informasi yang relevan ✅|
+|Malformed/ Unexpected Input|Sistem tetap stabil ketika diberi input kosong, sangat panjang, atau karakter acak|Router mengarahkan ke route RAG dan mengakui tidak memiliki informasi yang relevan ✅|
 
-1. Utilitas hanya mencakup 2 task: menjawab pertanyaan seputar kebijakan perusahaan dan mengambil data tiket sesuai ID tiket yang diberikan
-2. Model LLM hanya menjawab berdasarkan 3 data pertanyaan-jawaban yang paling relevan dari knowledge-base
-3. Format ID tiket yang dikenali adalah TICKET-XXXX (case insensitive, semua X adalah digit angka)
+### Latency & Token Consumption
+|Evaluation Focus|Latency|Token Cost|
+|:--:|---|---|
+|Query panjang meminta respon panjang|4.9s|675|
+|Query satu kata sapaan|6.6s|584|
 
-### Struktur Repositori
-```
-app/
-├── main.py       # Entry point FastAPI, berisi endpoint /ask
-├── router.py     # Intent detection + routing ke RAG atau tool call
-├── rag.py        # Modul RAG: embedding, FAISS, semantic search, LLM answer
-└── tools.py      # Modul tool call: pengecekan status tiket
+## 2. Action Taken
+### Routing System Redesign
+Mengubah sistem routing binary menjadi toggle on/off pada setiap route. Memungkinkan sistem mengeksekusi lebih dari satu route sesuai dengan kebutuhan dari pertanyaan input.
 
-data/
-├── it_helpdesk_knowledge_base.csv   # Knowledge base untuk RAG
-└── mock_tickets.csv                 # Data mock untuk tool call
-```
+||Query|Route Triggered|Response|
+|---|---|:--:|---|
+|**Before**|kenapa laptop saya lambat dan gimana cara cek tiket yang saya buat soal itu?|`ticket_status`|Format ID tiket tidak dikenali|
+|**After**|kenapa laptop saya lambat dan gimana cara cek tiket yang saya buat soal itu?|`ticket_status`, `faq`|Untuk masalah laptop lambat, silakan laporkan melalui tiket IT dengan kateogri 'Hardware Issue', dan mohon informasikan ID tiket anda dengan format 'TICKET-XXXX' agar saya dapat mengecek statusnya|
 
-* **Intent detection**: Menggunakan LLM untuk mengklasifikasikan kebutuhan RAG atau data-retrieval dari pertanyaan pengguna. Kebutuhan tool-call untuk retrive data tiket ditandai dengan adanya penyantuman ID tiket sesuai dengan format TICKET-XXXX
-* ***RAG**: Mengambil informasi yang relevan dari knowledge-base dengan semantic search. Menentukan apakah informasi cukup relevan dengan pertanyaan. Memberikan jawaban ketika informasi yang tersedia relevan dengan pertanyaan, memberikan fallback-response ketika tidak relevan.
-* **Data Retrieval**: Mengekstrak ID tiket dari pertanyaan pengguna dengan regex. Mengembalikan data berdasarkan ID tiket yang tercantum, memberikan fallback-response ketika ID tiket tidak sesuai format atau tidak ditemukan. 
+### Prompt Improvement
+Menyesuaikan prompt agar dapat menghandle sebagian jawaban yang tidak ditemukan, tanpa menganggap semua jawaban jadi tidak relevan
 
-## 3. Hasil dan Analisis
-Pengujian pada API endpoint menunjukkan sistem dapat bekerja dengan baik, Intent Detection dapat mengarahkan ke route yang sesuai dengan pertanyaan user. Sistem RAG mampu melakukan penilaian relevansi informasi dengan pertanyaan, menjawab dengan informasi yang benar, dan memberikan fallback-response untuk pertanyaan yang tidak relevan. Sistem data-retrieval mampu mengekstrak ID tiket dari pertanyaan pengguna dengan cukup fleksibel, mengambil data yang benar dengan presisi, dan memberikan fallback response ketika ID tiket tidak sesuai format atau tidak ditemukan.
+||Query|Response|
+|---|---|---|
+|**Before**|Tolong jelaskan sedetail-detailnya seluruh kebijakan cuti, reset password, permintaan perangkat, dan proses onboarding sekaligus dalam satu jawaban|Saya belum memiliki informasi lengkap mengenai seluruh kebijakan cuti, reset password, permintaan perangkat, dan proses onboarding secara mendetail dalam satu jawaban. Mohon hubungi IT Support untuk mendapatkan panduan lengkap terkait prosedur-prosedur tersebut.|
+|**After**|Tolong jelaskan sedetail-detailnya seluruh kebijakan cuti, reset password, permintaan perangkat, dan proses onboarding sekaligus dalam satu jawaban|Untuk reset password, silakan hubungi tim IT Support melalui tiket agar kami dapat melakukan verifikasi identitas; untuk cuti, ajukan melalui portal HR minimal 3 hari kerja sebelum tanggal cuti dengan persetujuan atasan; namun, saya tidak memiliki informasi mengenai kebijakan permintaan perangkat dan proses onboarding, silakan hubungi tim IT Support untuk bantuan lebih lanjut.|
 
-### Hasil Query Test
-| No | Query (Skenario) | Answer Key | Status | Detected Intent | Response |
-|:--:|---|---|:--:|:--:|---|
-| 1 | Bagaimana cara reset password VPN perusahaan<br>*(FAQ – Information available – Exact-match)* | Bagaimana cara reset password VPN perusahaan? Reset password VPN dapat dilakukan mandiri melalui portal self-service IT, atau menghubungi tim IT Support jika akun terkunci. | success | faq | Anda dapat melakukan reset password VPN secara mandiri melalui portal self-service IT. Jika akun Anda terkunci, silakan hubungi tim IT Support untuk mendapatkan bantuan lebih lanjut. |
-| 2 | Gmn klo laotop kerja rusak?<br>*(FAQ – Information available – Paraphrased)* | Apa yang harus dilakukan jika laptop kerja rusak? Laporkan kerusakan melalui tiket IT dengan kategori 'Hardware Issue', sertakan deskripsi masalah agar tim dapat memberikan unit pengganti sementara jika diperlukan. | success | faq | Jika laptop kerja Anda rusak, silakan laporkan kerusakan tersebut melalui tiket IT dengan memilih kategori 'Hardware Issue'. Pastikan Anda menyertakan deskripsi masalah yang jelas agar tim IT dapat memberikan unit pengganti sementara jika diperlukan. |
-| 3 | Saya ingin mengajukan reimburse<br>*(FAQ – Information available – Paraphrased)* | Bagaimana cara mengajukan reimbursement biaya kerja? Reimbursement diajukan melalui portal HR dengan mengunggah bukti pembayaran, dan diproses dalam siklus payroll berikutnya. | success | faq | Untuk mengajukan reimbursement biaya kerja, silakan akses portal HR dan unggah bukti pembayaran Anda. Proses reimbursement akan dilakukan pada siklus payroll berikutnya. |
-| 4 | Berapa sisa jatah cuti yang saya miliki?<br>*(FAQ – Information available – Paraphrased)* | Bagaimana cara melihat sisa cuti yang saya miliki? Sisa cuti dapat dilihat secara real-time melalui portal HR pada menu 'Ringkasan Cuti Saya'. | success | faq | Anda dapat melihat sisa cuti Anda secara real-time melalui portal HR pada menu 'Ringkasan Cuti Saya'. |
-| 5 | Dimana alamat perusahaan ini?<br>*(FAQ – Information unavailable)* | *unavailable* | error | faq | Mohon maaf, saya tidak memiliki informasi mengenai alamat perusahaan. Silakan hubungi IT Support atau bagian HR untuk mendapatkan informasi tersebut. |
-| 6 | Siapa nama anda? Bagaimana saya harus memanggil anda?<br>*(FAQ – Information unavailable)* | *unavailable* | error | faq | Saya adalah asisten IT Helpdesk Anda. Saya tidak memiliki informasi mengenai nama spesifik saya, namun saya siap membantu Anda dengan pertanyaan terkait dukungan IT. Jika Anda memerlukan bantuan lebih lanjut, silakan hubungi tim IT Support. |
-| 7 | Tolong cek status dari TICKET-0010<br>*(Ticket – ID correct and found)* | *unavailable* | success | ticket_status | Tiket TICKET-0010<br>Subject: Laptop overheat saat dipakai lama<br>Status: Diproses<br>Last update: 2026-08-27 |
-| 8 | Bagaimana jika laptop kerja rusak? Saya sudah buat ticket 0010<br>*(Ticket – ID correct and found)* | TICKET-0010, Lestari Ningsih, Hardware, Laptop overheat saat dipakai lama, Diproses, 2026-08-27 | success | ticket_status | Tiket TICKET-0010<br>Subject: Laptop overheat saat dipakai lama<br>Status: Diproses<br>Last update: 2026-08-27 |
-| 9 | Tolong cek tiket dengan kode TICKET-010<br>*(Ticket – ID format false)* | *unavailable* | error | ticket_status | Format ID tiket tidak dikenali |
-| 10 | Tolong cek tiket dengan kode 0010<br>*(Ticket – ID format false)* | *unavailable* | error | ticket_status | Format ID tiket tidak dikenali |
-| 11 | Tolong cek tiket dengan kode TICKET-9999<br>*(Ticket – ID correct but not found)* | *unavailable* | error | ticket_status | Tiket TICKET-9999 tidak ditemukan |
-| 12 | Halo, apa kabar?<br>*(Miscellaneous)* | *unavailable* | error | faq | Halo! Saya baik, terima kasih sudah bertanya. Mohon maaf, saya belum memiliki informasi mengenai hal tersebut. Jika Anda memiliki pertanyaan terkait kendala teknis atau layanan IT, silakan hubungi IT Support kami untuk bantuan lebih lanjut. |
-| 13 | faoeioa eaofejap d15612<br>*(Miscellaneous)* | *unavailable* | error | faq | Mohon maaf, saya belum memiliki informasi mengenai pertanyaan tersebut. Silakan hubungi IT Support untuk bantuan lebih lanjut. |
+### Refactor FAISS Index Building Step
+Memindahkan proses index building dan loading ke Startup event API, menyimpan index dalam local storage saat pertama kali build.
+||Latency of First Response after API Startup|
+|---|:--:|
+**Before**|32.57s
+**After**|3.19s
+
+## 3. Development Recommendation
+- **Add dynamic top_k retrieval** in semantic search to accommodate larger input with multiple information requirements
 
 ## 4. Petunjuk Menjalankan Program
 ### Menjalankan Secara Lokal (tanpa Docker)
 
 ```bash
+cd system/
 pip install -r requirements.txt
 cp .env.example .env   # lalu isi GEMINI_API_KEY di dalam .env
 uvicorn app.main:app --reload
@@ -76,6 +82,7 @@ uvicorn app.main:app --reload
 ### Menjalankan dengan Docker
 
 ```bash
+cd system/
 docker build -t it-helpdesk-assistant .
 docker run -p 8000:8000 --env-file .env it-helpdesk-assistant
 ```
@@ -83,6 +90,7 @@ docker run -p 8000:8000 --env-file .env it-helpdesk-assistant
 ### Menguji Endpoint
 
 ```bash
+cd system/
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"query": "berapa jatah cuti tahunan saya?"}'
